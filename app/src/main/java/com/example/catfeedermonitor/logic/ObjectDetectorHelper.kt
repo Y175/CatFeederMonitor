@@ -15,7 +15,7 @@ import java.util.PriorityQueue
 import kotlin.math.max
 import kotlin.math.min
 
-// INSTRUCTION: Place your 'best_int8.tflite' file in the 'app/src/main/assets/' directory.
+// INSTRUCTION: Place your 'model.tflite' file in the 'app/src/main/assets/' directory.
 
 data class DetectionResult(
     val boundingBox: RectF,
@@ -31,7 +31,7 @@ class ObjectDetectorHelper(context: Context) {
     private val iouThreshold = 0.5f
 
     init {
-        val modelFile = FileUtil.loadMappedFile(context, "best_int8.tflite")
+        val modelFile = FileUtil.loadMappedFile(context, "model.tflite")
         val options = Interpreter.Options()
         interpreter = Interpreter(modelFile, options)
     }
@@ -47,7 +47,7 @@ class ObjectDetectorHelper(context: Context) {
             // If the model is int8 quantized, it might expect uint8 [0, 255] or int8 [-128, 127].
             // Assuming standard float input for simplicity or that TensorImage handles basic conversion.
             // If the model is strictly int8 input, we might need specific normalization.
-            // Given "best_int8.tflite", it likely takes quantized inputs or dequantizes internally.
+            // Given "model.tflite", it likely takes quantized inputs or dequantizes internally.
             // We'll assume float input [0,1] is handled or we pass normalized data.
             // For safety with TFLite Support, we often use NormalizeOp if we know mean/std.
             // YOLOv8 default: 0-255 -> 0.0-1.0.
