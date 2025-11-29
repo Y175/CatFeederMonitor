@@ -77,9 +77,11 @@ class MainActivity : ComponentActivity() {
                     context = this,
                     executor = ioExecutor,
                     onImageSaved = { file ->
-                        currentTempImagePath = file.absolutePath // 暂存路径
+                        currentTempImagePath = file.absolutePath
                         runOnUiThread {
-                            Toast.makeText(this, "抓拍成功，正在计时...", Toast.LENGTH_SHORT).show()
+                            // 这里也可以顺便改一下显示，让提示更友好
+                            val displayName = if (catName == "putong") "噗通" else catName
+                            Toast.makeText(this, "抓拍成功，$displayName 正在进食...", Toast.LENGTH_SHORT).show()
                         }
                     },
                     onError = { exc ->
@@ -88,11 +90,11 @@ class MainActivity : ComponentActivity() {
                 )
             },
             onSessionEnded = { catName, duration ->
+                val displayName = if (catName == "putong") "噗通" else catName
                 // 2. 进食结束，写入数据库 (包含时长)
                 val imagePath = currentTempImagePath ?: "" // 取出刚才拍的照片
-
                 val record = FeedingRecord(
-                    catName = catName,
+                    catName = displayName,
                     timestamp = System.currentTimeMillis(), // 记录结束时间作为入库时间
                     imagePath = imagePath,
                     duration = duration // NEW: 存入时长
@@ -107,7 +109,7 @@ class MainActivity : ComponentActivity() {
 
                 runOnUiThread {
                     val sec = duration / 1000
-                    Toast.makeText(this, "$catName 进食结束: ${sec}秒", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, "$displayName 进食结束: ${sec}秒", Toast.LENGTH_LONG).show()
                 }
             }
         )
@@ -210,7 +212,7 @@ class MainActivity : ComponentActivity() {
                                 captureController = captureController
                             )
                         } else {
-                            Text("Detector not initialized")
+                            Text("检测器未初始化")
                         }
                     }
                     composable("stats") {

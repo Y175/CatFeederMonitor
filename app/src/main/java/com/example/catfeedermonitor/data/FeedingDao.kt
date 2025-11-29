@@ -18,4 +18,7 @@ interface FeedingDao {
     
     @Query("SELECT * FROM feeding_records WHERE timestamp BETWEEN :startTime AND :endTime ORDER BY timestamp DESC")
     fun getRecordsByDate(startTime: Long, endTime: Long): Flow<List<FeedingRecord>>
+
+    @androidx.room.Delete
+    suspend fun delete(record: FeedingRecord)
 }
