@@ -12,9 +12,10 @@ import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.List
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,6 +34,7 @@ import androidx.lifecycle.LifecycleOwner
 import com.example.catfeedermonitor.logic.DetectionResult
 import com.example.catfeedermonitor.logic.FeedingSessionManager
 import com.example.catfeedermonitor.logic.FeedingState
+import com.example.catfeedermonitor.logic.LogManager
 import com.example.catfeedermonitor.logic.ObjectDetectorHelper
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -126,7 +128,9 @@ class CaptureController {
 fun MonitorScreen(
     sessionManager: FeedingSessionManager,
     detectorHelper: ObjectDetectorHelper,
-    captureController: CaptureController
+    captureController: CaptureController,
+    logManager: LogManager,
+    onNavigateToDebug: () -> Unit
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -137,6 +141,8 @@ fun MonitorScreen(
 
     var detections by remember { mutableStateOf<List<DetectionResult>>(emptyList()) }
     var sourceResolution by remember { mutableStateOf(android.util.Size(1, 1)) }
+    var inferenceTime by remember { mutableStateOf(0L) }
+    var isDebugOverlayVisible by remember { mutableStateOf(false) }
 
     var isPowerSaveModeEnabled by remember { mutableStateOf(true) }
     var isCameraActive by remember { mutableStateOf(true) }
@@ -186,6 +192,12 @@ fun MonitorScreen(
                 modifier = Modifier.weight(1f)
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { isDebugOverlayVisible = !isDebugOverlayVisible }) {
+                    Icon(Icons.Filled.BugReport, contentDescription = "Debug", tint = if (isDebugOverlayVisible) Color.Green else Color.White)
+                }
+                IconButton(onClick = onNavigateToDebug) {
+                    Icon(Icons.Default.List, contentDescription = "Logs", tint = Color.White)
+                }
                 Text("省电模式", color = Color.White, style = MaterialTheme.typography.bodySmall)
                 Spacer(modifier = Modifier.width(4.dp))
                 Switch(
@@ -231,12 +243,13 @@ fun MonitorScreen(
                                 )
                                 val currentSize = android.util.Size(rotatedBitmap.width, rotatedBitmap.height)
 
-                                val results = detectorHelper.detect(rotatedBitmap)
-                                sessionManager.processDetections(results)
+                                val frameResult = detectorHelper.detect(rotatedBitmap)
+                                sessionManager.processDetections(frameResult.detections)
 
                                 previewView.post {
                                     sourceResolution = currentSize
-                                    detections = results
+                                    detections = frameResult.detections
+                                    inferenceTime = frameResult.inferenceTime
                                 }
                                 imageProxy.close()
                             }
@@ -255,6 +268,16 @@ fun MonitorScreen(
                     sourceHeight = sourceResolution.height,
                     modifier = Modifier.fillMaxSize()
                 )
+
+                if (isDebugOverlayVisible) {
+                    DebugOverlay(
+                        inferenceTime = inferenceTime,
+                        detections = detections,
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(top = 80.dp, start = 16.dp)
+                    )
+                }
 
                 if (currentFeedingState == FeedingState.IDLE && isPowerSaveModeEnabled) {
                     Text(
@@ -329,6 +352,25 @@ fun DetectionOverlay(
                     paint
                 )
             }
+        }
+    }
+}
+
+@Composable
+fun DebugOverlay(
+    inferenceTime: Long,
+    detections: List<DetectionResult>,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .background(Color.Black.copy(alpha = 0.6f))
+            .padding(8.dp)
+    ) {
+        Text("Inference Time: ${inferenceTime}ms", color = Color.Green, style = MaterialTheme.typography.bodySmall)
+        Text("Detections: ${detections.size}", color = Color.Green, style = MaterialTheme.typography.bodySmall)
+        detections.forEach {
+            Text("- ${it.label}: ${(it.score * 100).toInt()}%", color = Color.Green, style = MaterialTheme.typography.bodySmall)
         }
     }
 }

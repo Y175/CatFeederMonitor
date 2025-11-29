@@ -13,7 +13,8 @@ enum class FeedingState {
 class FeedingSessionManager(
     private val onCaptureTriggered: (String) -> Unit,
     // NEW: 新增一个回调，当猫吃完离开时触发，返回 (猫名, 时长毫秒)
-    private val onSessionEnded: (String, Long) -> Unit
+    private val onSessionEnded: (String, Long) -> Unit,
+    private val logManager: LogManager
 ) {
     private val _currentState = MutableStateFlow(FeedingState.IDLE)
     val currentState: StateFlow<FeedingState> = _currentState.asStateFlow()
@@ -94,6 +95,7 @@ class FeedingSessionManager(
         verifyingCat = catName
         verificationStartTime = System.currentTimeMillis()
         _statusMessage.value = "发现: $catName，确认中..."
+        logManager.info("FeedingSession", "Verifying: $catName")
     }
 
     private fun startSession(catName: String) {
@@ -106,6 +108,7 @@ class FeedingSessionManager(
         onCaptureTriggered(catName)
 
         _statusMessage.value = "状态: $catName 开始进食 (计时开始)"
+        logManager.info("FeedingSession", "Session started: $catName")
     }
 
     private fun finishSession() {
@@ -118,6 +121,9 @@ class FeedingSessionManager(
             // 如果时长太短（比如小于3秒），可能只是路过，可以选择不保存，这里我们先都保存
             if (totalDuration > 1000) {
                 onSessionEnded(cat, totalDuration)
+                logManager.info("FeedingSession", "Session ended: $cat, duration: ${totalDuration}ms")
+            } else {
+                logManager.info("FeedingSession", "Session ignored (too short): $cat, duration: ${totalDuration}ms")
             }
         }
 

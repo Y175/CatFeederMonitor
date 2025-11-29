@@ -5,9 +5,10 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [FeedingRecord::class], version = 1, exportSchema = false)
+@Database(entities = [FeedingRecord::class, DebugLog::class], version = 2, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun feedingDao(): FeedingDao
+    abstract fun debugLogDao(): DebugLogDao
 
     companion object {
         @Volatile
@@ -19,7 +20,9 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "cat_feeder_database"
-                ).build()
+                )
+                .fallbackToDestructiveMigration() // For simplicity in development
+                .build()
                 INSTANCE = instance
                 instance
             }

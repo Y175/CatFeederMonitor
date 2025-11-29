@@ -33,8 +33,10 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import com.example.catfeedermonitor.data.AppDatabase
 import com.example.catfeedermonitor.data.FeedingRecord
 import com.example.catfeedermonitor.logic.FeedingSessionManager
+import com.example.catfeedermonitor.logic.LogManager
 import com.example.catfeedermonitor.logic.ObjectDetectorHelper
 import com.example.catfeedermonitor.ui.CaptureController
+import com.example.catfeedermonitor.ui.DebugScreen
 import com.example.catfeedermonitor.ui.MonitorScreen
 import com.example.catfeedermonitor.ui.StatsScreen
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
@@ -49,6 +51,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var database: AppDatabase
     private lateinit var detectorHelper: ObjectDetectorHelper
     private lateinit var sessionManager: FeedingSessionManager
+    private lateinit var logManager: LogManager
     private val captureController = CaptureController()
     private val ioExecutor = Executors.newSingleThreadExecutor()
     private var currentTempImagePath: String? = null // NEW: 用来暂存刚才拍的照片路径
@@ -62,11 +65,15 @@ class MainActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         database = AppDatabase.getDatabase(this)
+        logManager = LogManager(database.debugLogDao())
+
+        logManager.info("MainActivity", "App started")
 
         try {
             detectorHelper = ObjectDetectorHelper(this)
         } catch (e: Exception) {
             Log.e("MainActivity", "Error initializing detector", e)
+            logManager.error("MainActivity", "Error initializing detector: ${e.message}")
             Toast.makeText(this, "Failed to load model: ${e.message}", Toast.LENGTH_LONG).show()
         }
 
@@ -86,6 +93,7 @@ class MainActivity : ComponentActivity() {
                     },
                     onError = { exc ->
                         Log.e("MainActivity", "Capture failed", exc)
+                        logManager.error("MainActivity", "Capture failed: ${exc.message}")
                     }
                 )
             },
@@ -110,8 +118,10 @@ class MainActivity : ComponentActivity() {
                 runOnUiThread {
                     val sec = duration / 1000
                     Toast.makeText(this, "$displayName 进食结束: ${sec}秒", Toast.LENGTH_LONG).show()
+                    logManager.info("FeedingSession", "$displayName finished feeding. Duration: ${sec}s")
                 }
-            }
+            },
+            logManager = logManager
         )
 
         setContent {
@@ -209,7 +219,11 @@ class MainActivity : ComponentActivity() {
                             MonitorScreen(
                                 sessionManager = sessionManager,
                                 detectorHelper = detectorHelper,
-                                captureController = captureController
+                                captureController = captureController,
+                                logManager = logManager,
+                                onNavigateToDebug = {
+                                    navController.navigate("debug")
+                                }
                             )
                         } else {
                             Text("检测器未初始化")
@@ -217,6 +231,9 @@ class MainActivity : ComponentActivity() {
                     }
                     composable("stats") {
                         StatsScreen(dao = database.feedingDao())
+                    }
+                    composable("debug") {
+                        DebugScreen(dao = database.debugLogDao(), navController = navController)
                     }
                 }
             }
