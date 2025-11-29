@@ -25,7 +25,7 @@ import java.util.*
 @Composable
 fun StatsScreen(dao: FeedingDao) {
     val records by dao.getAllRecords().collectAsState(initial = emptyList())
-    
+
     // Calculate stats
     val today = remember { Calendar.getInstance() }
     val startOfDay = remember(today) {
@@ -35,19 +35,16 @@ fun StatsScreen(dao: FeedingDao) {
         cal.set(Calendar.SECOND, 0)
         cal.timeInMillis
     }
-    
-    val startOfWeek = remember(today) {
-        val cal = today.clone() as Calendar
-        cal.set(Calendar.DAY_OF_WEEK, cal.firstDayOfWeek)
-        cal.set(Calendar.HOUR_OF_DAY, 0)
-        cal.timeInMillis
-    }
 
-    val todaySunny = records.count { it.catName == "sunny" && it.timestamp >= startOfDay }
-    val todayPutong = records.count { it.catName == "putong" && it.timestamp >= startOfDay }
-    
-    val weekSunny = records.count { it.catName == "sunny" && it.timestamp >= startOfWeek }
-    val weekPutong = records.count { it.catName == "putong" && it.timestamp >= startOfWeek }
+    // 过滤今日数据
+    val todayRecords = records.filter { it.timestamp >= startOfDay }
+
+    val todaySunnyCount = todayRecords.count { it.catName == "sunny" }
+    val todayPutongCount = todayRecords.count { it.catName == "putong" }
+
+    // NEW: 计算今日总时长 (秒)
+    val todaySunnyDuration = todayRecords.filter { it.catName == "sunny" }.sumOf { it.duration } / 1000
+    val todayPutongDuration = todayRecords.filter { it.catName == "putong" }.sumOf { it.duration } / 1000
 
     var selectedRecord by remember { mutableStateOf<FeedingRecord?>(null) }
 
@@ -58,15 +55,26 @@ fun StatsScreen(dao: FeedingDao) {
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
-                Text("今日数据", style = MaterialTheme.typography.titleMedium)
-                Text("Sunny: $todaySunny 次 | Putong: $todayPutong 次", style = MaterialTheme.typography.bodyLarge)
+                Text("今日概览", style = MaterialTheme.typography.titleMedium)
                 Spacer(modifier = Modifier.height(8.dp))
-                Text("本周统计", style = MaterialTheme.typography.titleMedium)
-                Text("Sunny: $weekSunny 次 | Putong: $weekPutong 次", style = MaterialTheme.typography.bodyLarge)
+
+                // Sunny Stats
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Sunny", style = MaterialTheme.typography.bodyLarge)
+                    Text("$todaySunnyCount 次 | 共 ${formatDuration(todaySunnyDuration)}", style = MaterialTheme.typography.bodyLarge)
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                // Putong Stats
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Putong", style = MaterialTheme.typography.bodyLarge)
+                    Text("$todayPutongCount 次 | 共 ${formatDuration(todayPutongDuration)}", style = MaterialTheme.typography.bodyLarge)
+                }
             }
         }
 
-        Text("历史记录", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(bottom = 8.dp))
+        Text("详细记录", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(bottom = 8.dp))
 
         LazyColumn(
             verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -84,6 +92,13 @@ fun StatsScreen(dao: FeedingDao) {
             selectedRecord = null
         }
     }
+}
+
+// 辅助函数：格式化秒数为分:秒
+fun formatDuration(totalSeconds: Long): String {
+    val m = totalSeconds / 60
+    val s = totalSeconds % 60
+    return if (m > 0) "${m}分${s}秒" else "${s}秒"
 }
 
 @Composable
@@ -104,7 +119,22 @@ fun RecordItem(record: FeedingRecord, onClick: () -> Unit) {
             )
             Spacer(modifier = Modifier.width(16.dp))
             Column {
-                Text(record.catName, style = MaterialTheme.typography.titleMedium)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(record.catName, style = MaterialTheme.typography.titleMedium)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    // NEW: 显示单次进食时长标签
+                    Surface(
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        shape = MaterialTheme.shapes.small
+                    ) {
+                        Text(
+                            text = formatDuration(record.duration / 1000),
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+
                 val sdf = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
                 Text(sdf.format(Date(record.timestamp)), style = MaterialTheme.typography.bodyMedium)
             }

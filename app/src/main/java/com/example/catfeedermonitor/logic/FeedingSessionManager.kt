@@ -1,22 +1,19 @@
 package com.example.catfeedermonitor.logic
 
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 
 enum class FeedingState {
     IDLE,      // 无人/等待
-    VERIFYING, // 发现目标，确认中（防误触）
-    RECORDING  // 正在进食 (已抓拍，持续监测直到猫离开)
+    VERIFYING, // 发现目标，确认中
+    RECORDING  // 正在进食 (已抓拍，计时中)
 }
 
 class FeedingSessionManager(
-    private val onCaptureTriggered: (String) -> Unit
+    private val onCaptureTriggered: (String) -> Unit,
+    // NEW: 新增一个回调，当猫吃完离开时触发，返回 (猫名, 时长毫秒)
+    private val onSessionEnded: (String, Long) -> Unit
 ) {
     private val _currentState = MutableStateFlow(FeedingState.IDLE)
     val currentState: StateFlow<FeedingState> = _currentState.asStateFlow()
@@ -27,19 +24,19 @@ class FeedingSessionManager(
     // 确认相关
     private var verifyingCat: String? = null
     private var verificationStartTime: Long = 0
-    private val VERIFICATION_DURATION = 2000L // 2秒确认即可，稍微快点
+    private val VERIFICATION_DURATION = 2000L
 
     // 会话相关
     private var currentSessionCat: String? = null
+    private var sessionStartTime: Long = 0 // NEW: 记录开始时间
     private var lastSeenTime: Long = 0
-    private val SESSION_TIMEOUT = 5000L // 如果猫消失超过5秒，认为它走了
+    private val SESSION_TIMEOUT = 5000L
 
     fun processDetections(detections: List<DetectionResult>) {
         val topDetection = detections.maxByOrNull { it.score }
         val detectedCat = topDetection?.label
 
         when (_currentState.value) {
-            // 1. 空闲状态：发现猫 -> 去确认
             FeedingState.IDLE -> {
                 if (detectedCat != null) {
                     startVerification(detectedCat)
@@ -48,54 +45,44 @@ class FeedingSessionManager(
                 }
             }
 
-            // 2. 确认状态：
-            //    - 猫还在：检查时间是否够了
-            //    - 猫变了：重新开始确认新的猫
-            //    - 猫没了：回到 IDLE
             FeedingState.VERIFYING -> {
                 if (detectedCat == null) {
                     resetToIdle("目标丢失")
                     return
                 }
-
                 if (detectedCat != verifyingCat) {
-                    // 换猫了，重新确认新的猫
                     startVerification(detectedCat)
                     return
                 }
-
-                // 还是同一只猫，检查确认时间
                 val elapsed = System.currentTimeMillis() - verificationStartTime
                 _statusMessage.value = "确认中: $detectedCat (${elapsed / 100}%)"
-
                 if (elapsed >= VERIFICATION_DURATION) {
                     startSession(detectedCat)
                 }
             }
 
-            // 3. 记录状态（进食中）：
-            //    - 同一只猫还在：更新最后见面时间（续命）
-            //    - 不同的猫来了：立即结束当前会话，开始新猫的确认
-            //    - 猫不见了：检查是否超时，超时则结束
             FeedingState.RECORDING -> {
+                // 计算当前已持续时长（用于显示）
+                val currentDuration = System.currentTimeMillis() - sessionStartTime
+                val durationSec = currentDuration / 1000
+
                 if (detectedCat != null) {
                     if (detectedCat == currentSessionCat) {
-                        // 同一只猫还在吃，更新时间，保持状态
                         lastSeenTime = System.currentTimeMillis()
-                        _statusMessage.value = "状态: $currentSessionCat 正在进食..."
+                        _statusMessage.value = "状态: $currentSessionCat 进食中 (${durationSec}s)..."
                     } else {
-                        // 突然变成了另一只猫！(比如 Sunny 挤走了 Putong)
-                        // 立即结束上一个会话，开始新猫的验证
+                        // 换猫了：先结束当前会话，再开始新的验证
                         finishSession()
                         startVerification(detectedCat)
                     }
                 } else {
-                    // 画面里没猫了，检查消失了多久
                     val timeSinceLastSeen = System.currentTimeMillis() - lastSeenTime
                     if (timeSinceLastSeen > SESSION_TIMEOUT) {
-                        finishSession() // 认为猫已经吃完走了
+                        finishSession()
                     } else {
-                        _statusMessage.value = "状态: $currentSessionCat 暂时离开 (${(SESSION_TIMEOUT - timeSinceLastSeen)/1000}s)"
+                        // 倒计时显示
+                        val remaining = (SESSION_TIMEOUT - timeSinceLastSeen) / 1000
+                        _statusMessage.value = "状态: $currentSessionCat 离开? (缓冲 ${remaining}s) | 已吃 ${durationSec}s"
                     }
                 }
             }
@@ -113,15 +100,27 @@ class FeedingSessionManager(
         _currentState.value = FeedingState.RECORDING
         currentSessionCat = catName
         lastSeenTime = System.currentTimeMillis()
+        sessionStartTime = System.currentTimeMillis() // NEW: 记下开始时间
 
-        // 触发抓拍
+        // 触发抓拍（还是为了留照片）
         onCaptureTriggered(catName)
 
-        _statusMessage.value = "状态: $catName 正在进食 (已记录)"
+        _statusMessage.value = "状态: $catName 开始进食 (计时开始)"
     }
 
     private fun finishSession() {
-        // 会话结束
+        val cat = currentSessionCat
+        val startTime = sessionStartTime
+
+        // NEW: 计算总时长并回调
+        if (cat != null && startTime > 0) {
+            val totalDuration = lastSeenTime - startTime // 用最后看到的时间算，去掉缓冲期
+            // 如果时长太短（比如小于3秒），可能只是路过，可以选择不保存，这里我们先都保存
+            if (totalDuration > 1000) {
+                onSessionEnded(cat, totalDuration)
+            }
+        }
+
         resetToIdle("进食结束")
     }
 
@@ -129,6 +128,7 @@ class FeedingSessionManager(
         _currentState.value = FeedingState.IDLE
         verifyingCat = null
         currentSessionCat = null
+        sessionStartTime = 0
         if (reason != null) {
             _statusMessage.value = "状态: $reason -> 等待中"
         }

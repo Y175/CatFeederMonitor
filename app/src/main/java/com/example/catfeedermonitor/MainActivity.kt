@@ -51,6 +51,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var sessionManager: FeedingSessionManager
     private val captureController = CaptureController()
     private val ioExecutor = Executors.newSingleThreadExecutor()
+    private var currentTempImagePath: String? = null // NEW: 用来暂存刚才拍的照片路径
+
 
     @OptIn(ExperimentalPermissionsApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -68,30 +70,47 @@ class MainActivity : ComponentActivity() {
             Toast.makeText(this, "Failed to load model: ${e.message}", Toast.LENGTH_LONG).show()
         }
 
-        sessionManager = FeedingSessionManager { catName ->
-            // On Capture Triggered
-            captureController.takePicture(
-                context = this,
-                executor = ioExecutor,
-                onImageSaved = { file ->
-                    // Save to DB
-                    val record = FeedingRecord(
-                        catName = catName,
-                        timestamp = System.currentTimeMillis(),
-                        imagePath = file.absolutePath
-                    )
-                    CoroutineScope(Dispatchers.IO).launch {
-                        database.feedingDao().insert(record)
+        sessionManager = FeedingSessionManager(
+            onCaptureTriggered = { catName ->
+                // 1. 触发抓拍，但不立即存库，只保存图片文件
+                captureController.takePicture(
+                    context = this,
+                    executor = ioExecutor,
+                    onImageSaved = { file ->
+                        currentTempImagePath = file.absolutePath // 暂存路径
+                        runOnUiThread {
+                            Toast.makeText(this, "抓拍成功，正在计时...", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    onError = { exc ->
+                        Log.e("MainActivity", "Capture failed", exc)
                     }
-                    runOnUiThread {
-                        Toast.makeText(this, "已抓拍: $catName", Toast.LENGTH_SHORT).show()
-                    }
-                },
-                onError = { exc ->
-                    Log.e("MainActivity", "Capture failed", exc)
+                )
+            },
+            onSessionEnded = { catName, duration ->
+                // 2. 进食结束，写入数据库 (包含时长)
+                val imagePath = currentTempImagePath ?: "" // 取出刚才拍的照片
+
+                val record = FeedingRecord(
+                    catName = catName,
+                    timestamp = System.currentTimeMillis(), // 记录结束时间作为入库时间
+                    imagePath = imagePath,
+                    duration = duration // NEW: 存入时长
+                )
+
+                CoroutineScope(Dispatchers.IO).launch {
+                    database.feedingDao().insert(record)
                 }
-            )
-        }
+
+                // 清空暂存
+                currentTempImagePath = null
+
+                runOnUiThread {
+                    val sec = duration / 1000
+                    Toast.makeText(this, "$catName 进食结束: ${sec}秒", Toast.LENGTH_LONG).show()
+                }
+            }
+        )
 
         setContent {
             MaterialTheme {

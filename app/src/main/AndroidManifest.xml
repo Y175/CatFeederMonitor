@@ -18,9 +18,12 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.CatFeederMonitor"
         tools:targetApi="31">
+
+        <!-- 修改了这里，添加了 configChanges 属性 -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:configChanges="orientation|screenLayout|screenSize|smallestScreenSize"
             android:theme="@style/Theme.CatFeederMonitor">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
