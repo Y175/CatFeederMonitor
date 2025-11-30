@@ -41,6 +41,7 @@ class ObjectDetectorHelper(context: Context) {
         interpreter = Interpreter(modelFile, options)
     }
 
+    @Synchronized
     fun detect(bitmap: Bitmap): DetectionFrameResult {
         if (interpreter == null) return DetectionFrameResult(emptyList(), 0)
 

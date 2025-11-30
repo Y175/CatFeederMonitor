@@ -46,6 +46,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.util.concurrent.Executors
+import android.graphics.BitmapFactory
+import java.io.FileOutputStream
+import com.example.catfeedermonitor.ui.BitmapAnnotator
+import android.media.ExifInterface
+import android.graphics.Matrix
+import android.graphics.Bitmap
+import java.io.File
 
 class MainActivity : ComponentActivity() {
     private lateinit var database: AppDatabase
@@ -84,6 +91,62 @@ class MainActivity : ComponentActivity() {
                     context = this,
                     executor = ioExecutor,
                     onImageSaved = { file ->
+                        // NEW: 抓拍后立即进行二次检测并标注
+                        try {
+                            var bitmap = BitmapFactory.decodeFile(file.absolutePath)
+
+                            // Handle rotation based on EXIF
+                            val exif = ExifInterface(file.absolutePath)
+                            val orientation = exif.getAttributeInt(
+                                ExifInterface.TAG_ORIENTATION,
+                                ExifInterface.ORIENTATION_NORMAL
+                            )
+                            
+                            val matrix = Matrix()
+                            var needsRotation = false
+                            when (orientation) {
+                                ExifInterface.ORIENTATION_ROTATE_90 -> {
+                                    matrix.postRotate(90f)
+                                    needsRotation = true
+                                }
+                                ExifInterface.ORIENTATION_ROTATE_180 -> {
+                                    matrix.postRotate(180f)
+                                    needsRotation = true
+                                }
+                                ExifInterface.ORIENTATION_ROTATE_270 -> {
+                                    matrix.postRotate(270f)
+                                    needsRotation = true
+                                }
+                            }
+
+                            if (needsRotation) {
+                                val rotatedBitmap = Bitmap.createBitmap(
+                                    bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true
+                                )
+                                if (rotatedBitmap != bitmap) {
+                                    bitmap.recycle()
+                                    bitmap = rotatedBitmap
+                                }
+                            }
+
+                            // 注意：这里我们假设图片方向是正确的，或者 detectorHelper 能处理
+                            val frameResult = detectorHelper.detect(bitmap)
+
+                            val annotatedBitmap = BitmapAnnotator.drawDetections(bitmap, frameResult.detections)
+
+                            FileOutputStream(file).use { out ->
+                                annotatedBitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+                            }
+
+                            bitmap.recycle()
+                            annotatedBitmap.recycle()
+
+                            logManager.info("MainActivity", "Image annotated and saved: ${file.absolutePath}")
+                        } catch (e: Exception) {
+                            Log.e("MainActivity", "Error annotating image", e)
+                            logManager.error("MainActivity", "Error annotating image: ${e.message}")
+                        }
+
                         currentTempImagePath = file.absolutePath
                         runOnUiThread {
                             // 这里也可以顺便改一下显示，让提示更友好
