@@ -27,7 +27,8 @@ import java.util.*
 @Composable
 fun DebugScreen(
     dao: DebugLogDao,
-    navController: NavController
+    navController: NavController,
+    webServerIp: String
 ) {
     val logs by dao.getAllLogs().collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
@@ -51,15 +52,30 @@ fun DebugScreen(
             )
         }
     ) { innerPadding ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .background(Color.Black)
-        ) {
-            items(logs) { log ->
-                LogItem(log)
-                Divider(color = Color.DarkGray, thickness = 0.5.dp)
+        Column(modifier = Modifier.padding(innerPadding)) {
+            // Display Server IP
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Web Server Running At:", style = MaterialTheme.typography.labelMedium)
+                    Text(webServerIp, style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    Text("在局域网内浏览器访问此地址查看监控", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+            ) {
+                items(logs) { log ->
+                    LogItem(log)
+                    Divider(color = Color.DarkGray, thickness = 0.5.dp)
+                }
             }
         }
     }

@@ -21,4 +21,11 @@ interface FeedingDao {
 
     @androidx.room.Delete
     suspend fun delete(record: FeedingRecord)
+
+    // For Web Server (One-shot queries)
+    @Query("SELECT * FROM feeding_records ORDER BY timestamp DESC LIMIT 50")
+    suspend fun getRecentRecordsSync(): List<FeedingRecord>
+
+    @Query("SELECT * FROM feeding_records WHERE timestamp >= :startTime ORDER BY timestamp DESC")
+    suspend fun getRecordsSinceSync(startTime: Long): List<FeedingRecord>
 }

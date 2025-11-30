@@ -2,7 +2,14 @@ package com.example.catfeedermonitor
 
 import android.Manifest
 import android.app.Activity
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.media.ExifInterface
+import android.net.wifi.WifiManager
 import android.os.Bundle
+import android.text.format.Formatter
 import android.util.Log
 import android.view.WindowManager
 import android.widget.Toast
@@ -28,13 +35,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
-import androidx.navigation.compose.rememberNavController
 import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
 import com.example.catfeedermonitor.data.AppDatabase
 import com.example.catfeedermonitor.data.FeedingRecord
 import com.example.catfeedermonitor.logic.FeedingSessionManager
 import com.example.catfeedermonitor.logic.LogManager
 import com.example.catfeedermonitor.logic.ObjectDetectorHelper
+import com.example.catfeedermonitor.logic.WebServer
+import com.example.catfeedermonitor.ui.BitmapAnnotator
 import com.example.catfeedermonitor.ui.CaptureController
 import com.example.catfeedermonitor.ui.DebugScreen
 import com.example.catfeedermonitor.ui.MonitorScreen
@@ -45,30 +54,25 @@ import com.google.accompanist.permissions.rememberPermissionState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import java.util.concurrent.Executors
-import android.graphics.BitmapFactory
-import java.io.FileOutputStream
-import com.example.catfeedermonitor.ui.BitmapAnnotator
-import android.media.ExifInterface
-import android.graphics.Matrix
-import android.graphics.Bitmap
 import java.io.File
+import java.io.FileOutputStream
+import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
     private lateinit var database: AppDatabase
     private lateinit var detectorHelper: ObjectDetectorHelper
     private lateinit var sessionManager: FeedingSessionManager
     private lateinit var logManager: LogManager
+    private lateinit var webServer: WebServer
+    
     private val captureController = CaptureController()
     private val ioExecutor = Executors.newSingleThreadExecutor()
-    private var currentTempImagePath: String? = null // NEW: 用来暂存刚才拍的照片路径
-
+    private var currentTempImagePath: String? = null
 
     @OptIn(ExperimentalPermissionsApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // NEW: 保持屏幕常亮，防止系统自动休眠断开相机
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         database = AppDatabase.getDatabase(this)
@@ -86,16 +90,12 @@ class MainActivity : ComponentActivity() {
 
         sessionManager = FeedingSessionManager(
             onCaptureTriggered = { catName ->
-                // 1. 触发抓拍，但不立即存库，只保存图片文件
                 captureController.takePicture(
                     context = this,
                     executor = ioExecutor,
                     onImageSaved = { file ->
-                        // NEW: 抓拍后立即进行二次检测并标注
                         try {
                             var bitmap = BitmapFactory.decodeFile(file.absolutePath)
-
-                            // Handle rotation based on EXIF
                             val exif = ExifInterface(file.absolutePath)
                             val orientation = exif.getAttributeInt(
                                 ExifInterface.TAG_ORIENTATION,
@@ -129,9 +129,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
 
-                            // 注意：这里我们假设图片方向是正确的，或者 detectorHelper 能处理
                             val frameResult = detectorHelper.detect(bitmap)
-
                             val annotatedBitmap = BitmapAnnotator.drawDetections(bitmap, frameResult.detections)
 
                             FileOutputStream(file).use { out ->
@@ -149,7 +147,6 @@ class MainActivity : ComponentActivity() {
 
                         currentTempImagePath = file.absolutePath
                         runOnUiThread {
-                            // 这里也可以顺便改一下显示，让提示更友好
                             val displayName = if (catName == "putong") "噗通" else catName
                             Toast.makeText(this, "抓拍成功，$displayName 正在进食...", Toast.LENGTH_SHORT).show()
                         }
@@ -162,20 +159,18 @@ class MainActivity : ComponentActivity() {
             },
             onSessionEnded = { catName, duration ->
                 val displayName = if (catName == "putong") "噗通" else catName
-                // 2. 进食结束，写入数据库 (包含时长)
-                val imagePath = currentTempImagePath ?: "" // 取出刚才拍的照片
+                val imagePath = currentTempImagePath ?: ""
                 val record = FeedingRecord(
                     catName = displayName,
-                    timestamp = System.currentTimeMillis(), // 记录结束时间作为入库时间
+                    timestamp = System.currentTimeMillis(),
                     imagePath = imagePath,
-                    duration = duration // NEW: 存入时长
+                    duration = duration
                 )
 
                 CoroutineScope(Dispatchers.IO).launch {
                     database.feedingDao().insert(record)
                 }
 
-                // 清空暂存
                 currentTempImagePath = null
 
                 runOnUiThread {
@@ -187,12 +182,26 @@ class MainActivity : ComponentActivity() {
             logManager = logManager
         )
 
+        // Initialize WebServer
+        webServer = WebServer(this, database.feedingDao())
+        webServer.start()
+
+        // Get IP
+        val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        val ipAddress = try {
+            Formatter.formatIpAddress(wifiManager.connectionInfo.ipAddress)
+        } catch (e: Exception) {
+            "Unavailable"
+        }
+        val webServerIp = "http://$ipAddress:8080"
+        logManager.info("MainActivity", "Web server started at $webServerIp")
+
         setContent {
             MaterialTheme {
                 val permissionState = rememberPermissionState(Manifest.permission.CAMERA)
 
                 if (permissionState.status.isGranted) {
-                    MainScreen()
+                    MainScreen(webServerIp)
                 } else {
                     LaunchedEffect(Unit) {
                         permissionState.launchPermissionRequest()
@@ -204,33 +213,27 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    fun MainScreen() {
+    fun MainScreen(webServerIp: String) {
         val navController = rememberNavController()
         val navBackStackEntry by navController.currentBackStackEntryAsState()
         val currentRoute = navBackStackEntry?.destination?.route
 
-        // NEW: 控制伪息屏模式的状态
         var isBlackScreenMode by remember { mutableStateOf(false) }
         val context = LocalContext.current
         val window = (context as? Activity)?.window
 
-        // NEW: 监听模式变化，自动调节屏幕亮度
         LaunchedEffect(isBlackScreenMode) {
             window?.let { win ->
                 val params = win.attributes
-                // 0.01f 是最暗，-1f 是跟随系统
                 params.screenBrightness = if (isBlackScreenMode) 0.01f else -1f
                 win.attributes = params
             }
         }
 
-        // 使用 Box 包裹整个界面，以便放置顶层的遮罩
         Box(modifier = Modifier.fillMaxSize()) {
-
             Scaffold(
-                // NEW: 在顶部添加一个按钮来进入省电模式
                 floatingActionButton = {
-                    if (!isBlackScreenMode) { // 只有不在黑屏模式时才显示按钮
+                    if (!isBlackScreenMode) {
                         FloatingActionButton(
                             onClick = { isBlackScreenMode = true },
                             containerColor = MaterialTheme.colorScheme.primary
@@ -247,9 +250,7 @@ class MainActivity : ComponentActivity() {
                             selected = currentRoute == "monitor",
                             onClick = {
                                 navController.navigate("monitor") {
-                                    popUpTo(navController.graph.startDestinationId) {
-                                        saveState = true
-                                    }
+                                    popUpTo(navController.graph.startDestinationId) { saveState = true }
                                     launchSingleTop = true
                                     restoreState = true
                                 }
@@ -261,9 +262,7 @@ class MainActivity : ComponentActivity() {
                             selected = currentRoute == "stats",
                             onClick = {
                                 navController.navigate("stats") {
-                                    popUpTo(navController.graph.startDestinationId) {
-                                        saveState = true
-                                    }
+                                    popUpTo(navController.graph.startDestinationId) { saveState = true }
                                     launchSingleTop = true
                                     restoreState = true
                                 }
@@ -296,26 +295,21 @@ class MainActivity : ComponentActivity() {
                         StatsScreen(dao = database.feedingDao())
                     }
                     composable("debug") {
-                        DebugScreen(dao = database.debugLogDao(), navController = navController)
+                        DebugScreen(dao = database.debugLogDao(), navController = navController, webServerIp = webServerIp)
                     }
                 }
             }
 
-            // NEW: 全屏黑色遮罩层
             if (isBlackScreenMode) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(Color.Black)
-                        .zIndex(99f) // 确保在最上层
+                        .zIndex(99f)
                         .pointerInput(Unit) {
-                            // 监听双击事件来退出黑屏模式
-                            detectTapGestures(
-                                onDoubleTap = { isBlackScreenMode = false }
-                            )
+                            detectTapGestures(onDoubleTap = { isBlackScreenMode = false })
                         }
                 ) {
-                    // 添加一个微弱的提示，防止用户以为死机了
                     Text(
                         text = "监控运行中... (双击唤醒)",
                         color = Color.DarkGray,
@@ -333,6 +327,9 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
         if (::detectorHelper.isInitialized) {
             detectorHelper.close()
+        }
+        if (::webServer.isInitialized) {
+            webServer.stop()
         }
         ioExecutor.shutdown()
     }
