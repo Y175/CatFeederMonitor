@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>猫咪进食监控中心</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; background-color: #f0f2f5; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { color: #333; text-align: center; }
+        .card { background: white; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; }
+        .stat-item { text-align: center; }
+        .stat-value { font-size: 2em; font-weight: bold; color: #2196F3; }
+        .stat-label { color: #666; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
+        th { background-color: #f8f9fa; }
+        .img-thumb { width: 100px; height: 100px; object-fit: cover; border-radius: 8px; cursor: pointer; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); justify-content: center; align-items: center; }
+        .modal img { max-width: 90%; max-height: 90%; border-radius: 8px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🐱 猫咪进食监控中心</h1>
+        
+        <div class="card">
+            <h2>今日概览</h2>
+            <div class="stats-grid" id="stats">
+                <div class="stat-item">
+                    <div class="stat-value" id="today-total">0</div>
+                    <div class="stat-label">今日总进食次数</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="today-sunny">0</div>
+                    <div class="stat-label">Sunny</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="today-putong">0</div>
+                    <div class="stat-label">噗通</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>最近进食记录</h2>
+            <table id="records-table">
+                <thead>
+                    <tr>
+                        <th>时间</th>
+                        <th>猫咪</th>
+                        <th>时长</th>
+                        <th>照片</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Records will be populated here -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="modal" id="imageModal" onclick="this.style.display='none'">
+        <img id="modalImg" src="" alt="Full size">
+    </div>
+
+    <script>
+        async function fetchData() {
+            try {
+                // Fetch stats (using records since last week for now, but we filter for today in JS)
+                const statsResponse = await fetch('/api/stats');
+                const statsRecords = await statsResponse.json();
+                
+                // Calculate today's stats
+                const today = new Date().setHours(0,0,0,0);
+                const todayRecords = statsRecords.filter(r => r.timestamp >= today);
+                
+                document.getElementById('today-total').textContent = todayRecords.length;
+                document.getElementById('today-sunny').textContent = todayRecords.filter(r => r.catName === 'sunny').length;
+                document.getElementById('today-putong').textContent = todayRecords.filter(r => r.catName === '噗通' || r.catName === 'putong').length;
+
+                // Fetch recent records
+                const recordsResponse = await fetch('/api/records');
+                const records = await recordsResponse.json();
+                
+                const tbody = document.querySelector('#records-table tbody');
+                tbody.innerHTML = '';
+                
+                records.forEach(record => {
+                    const tr = document.createElement('tr');
+                    const date = new Date(record.timestamp).toLocaleString();
+                    const duration = record.duration ? (record.duration / 1000).toFixed(1) + 's' : '-';
+                    
+                    // Extract filename from path
+                    // Path might be /storage/emulated/0/.../cat_123.jpg
+                    const filename = record.imagePath.split('/').pop();
+                    const imageUrl = `/images/${filename}`;
+                    
+                    tr.innerHTML = `
+                        <td>${date}</td>
+                        <td>${record.catName}</td>
+                        <td>${duration}</td>
+                        <td>
+                            ${record.imagePath ? `<img src="${imageUrl}" class="img-thumb" onclick="showImage('${imageUrl}')">` : '无'}
+                        </td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            } catch (e) {
+                console.error('Error fetching data:', e);
+            }
+        }
+
+        function showImage(url) {
+            document.getElementById('modalImg').src = url;
+            document.getElementById('imageModal').style.display = 'flex';
+        }
+
+        // Refresh every 30 seconds
+        fetchData();
+        setInterval(fetchData, 30000);
+    </script>
+</body>
+</html>
